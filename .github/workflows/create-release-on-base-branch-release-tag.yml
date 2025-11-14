@@ -1,0 +1,81 @@
+# Usage:
+# This is a reusable workflow that can be called from other workflows to create a GitHub Release
+
+# Example Call:
+# # repo-A/.github/workflows/create-release-on-base-branch-release-tag.yml
+# name: Release on master release tag
+
+# on:
+#   push:
+#     tags:
+#       - 'v*.*.*-release'
+
+# permissions:
+#   contents: write
+
+# jobs:
+#   create-release:
+#     uses: TerminalProdigy/Workflows/.github/workflows/create-release-on-base-branch-release-tag.yml@master
+#     with:
+#       tag_ref: ${{ github.ref }}
+#       tag_name: ${{ github.ref_name }}
+#       #base_branch: 'master'   # optional, defaults to master
+#     permissions:
+#       contents: write
+
+
+# TerminalProdigy/Workflows/.github/workflows/create-release-on-base-branch-release-tag.yml@master
+name: Reusable release workflow
+
+on:
+  workflow_call:
+    inputs:
+      tag_ref:
+        description: 'Full ref for the tag, e.g. refs/tags/v1.2.3-release'
+        type: string
+        required: true
+      tag_name:
+        description: 'Tag name, e.g. v1.2.3-release'
+        type: string
+        required: true
+      base_branch:
+        description: 'Branch to validate the tag against (default: master)'
+        type: string
+        default: 'master'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Ensure tag is on base branch latest commit
+      shell: bash
+      run: |
+        TAG_COMMIT=$(git rev-parse "${{ inputs.tag_ref }}")
+        BASE_COMMIT=$(git rev-parse "origin/${{ inputs.base_branch }}")
+
+        echo "Tag commit: $TAG_COMMIT"
+        echo "Base branch (${{ inputs.base_branch }}) commit: $BASE_COMMIT"
+
+        if [ "$TAG_COMMIT" != "$BASE_COMMIT" ]; then
+          echo "Tag is not on the latest commit of ${{ inputs.base_branch }}. Exiting."
+          exit 1
+        fi
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ inputs.tag_name }}
+        name: Release ${{ inputs.tag_name }}
+        generate_release_notes: true
+        draft: false
+        prerelease: false
