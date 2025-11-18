@@ -1,0 +1,78 @@
+name: Publish to GitHub Packages (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project_path:
+        description: 'The path to the .csproj or solution'
+        required: true
+        type: string
+      dotnet_version:
+        description: 'The .NET version to use'
+        required: false
+        default: '8.0.x'
+        type: string
+    secrets:
+      OWNER_PKG_PAT:
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ inputs.project_path }}
+
+    - name: Build project
+      run: dotnet build ${{ inputs.project_path }} --configuration Release --no-restore
+
+    - name: Set package version
+      run: |
+        if [[ "${{ github.event_name }}" == "release" ]]; then
+          RAW_TAG="${{ github.event.release.tag_name }}"
+        else
+          RAW_TAG=$(git describe --tags --abbrev=0)
+        fi
+
+        echo "Raw tag: $RAW_TAG"
+
+        # Extract the X.Y.Z part from tags like v1.0.0-release
+        if [[ "$RAW_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+          VERSION="${BASH_REMATCH[1]}"
+        else
+          echo "Failed to parse version from tag: $RAW_TAG"
+          exit 1
+        fi
+
+        echo "Using version: $VERSION"
+        echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Pack NuGet package
+      run: dotnet pack ${{ inputs.project_path }} --configuration Release --output nupkg -p:PackageVersion=${{ env.PACKAGE_VERSION }}
+
+    - name: Verify package exists
+      run: |
+        if [ -z "$(ls nupkg/*.nupkg 2>/dev/null)" ]; then
+          echo "No .nupkg files found. Exiting."
+          exit 1
+        fi
+
+    - name: Add GitHub source
+      run: dotnet nuget add source --username ${{ github.repository_owner }} --password ${{ secrets.OWNER_PKG_PAT }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+
+    - name: Publish to GitHub Packages
+      run: dotnet nuget push "nupkg/*.nupkg" --source "github" --api-key ${{ secrets.OWNER_PKG_PAT }} --skip-duplicate
+
+    - name: Remove GitHub source
+      run: dotnet nuget remove source github
